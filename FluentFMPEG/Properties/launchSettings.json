@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "FluentFMPEG (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "FluentFMPEG (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

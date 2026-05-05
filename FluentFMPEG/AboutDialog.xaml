@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="FluentFMPEG.AboutDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FluentFMPEG"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="About FluentFMPEG"
+    CloseButtonText="Close"
+    DefaultButton="Close">
+    <StackPanel Spacing="10" MinWidth="360">
+        <TextBlock Text="FluentFMPEG"
+                   FontSize="22"
+                   FontWeight="SemiBold" />
+        <TextBlock x:Name="VersionText"
+                   Opacity="0.6"
+                   FontSize="12" />
+        <TextBlock Text="An FFmpeg GUI built with WinUI 3."
+                   Opacity="0.8" />
+
+        <HyperlinkButton Content="github.com/l5z12/FluentFMPEG"
+                         NavigateUri="https://github.com/l5z12/FluentFMPEG"
+                         Padding="0" />
+
+        <TextBlock Text="Licensed under the GNU General Public License v3.0."
+                   TextWrapping="Wrap"
+                   Opacity="0.8" />
+
+        <TextBlock Text="Icons are from microsoft/fluentui-system-icons (MIT License)."
+                   TextWrapping="Wrap"
+                   FontSize="12"
+                   Opacity="0.6" />
+    </StackPanel>
+</ContentDialog>
