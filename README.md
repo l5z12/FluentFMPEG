@@ -7,6 +7,8 @@ with it. Convert formats, extract audio or video, or mux a video file with a
 separate audio track — with quality presets, optional advanced flags, and a
 bundled FFmpeg that downloads itself on first run.
 
+[<img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="56">](https://apps.microsoft.com/detail/9MVLZDRCVTTS)
+
 ## Features
 
 - **Drag-and-drop** any media file. `ffprobe` runs automatically and detects
@@ -62,6 +64,12 @@ Supported platforms: `x86`, `x64`, `ARM64`.
 ## License
 
 [GPL-3.0](LICENSE).
+
+## Privacy
+
+FluentFMPEG does not collect any data. See [PRIVACY.md](PRIVACY.md) for
+details, including the third-party hosts involved in the first-run FFmpeg
+download.
 
 ## Acknowledgments
 
