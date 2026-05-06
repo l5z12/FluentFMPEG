@@ -1,5 +1,5 @@
-using System.Reflection;
 using Microsoft.UI.Xaml.Controls;
+using Windows.ApplicationModel;
 
 namespace FluentFMPEG
 {
@@ -8,8 +8,8 @@ namespace FluentFMPEG
         public AboutDialog()
         {
             InitializeComponent();
-            var v = Assembly.GetExecutingAssembly().GetName().Version;
-            VersionText.Text = v is null ? "" : $"Version {v.ToString(3)}";
+            var v = Package.Current.Id.Version;
+            VersionText.Text = $"Version {v.Major}.{v.Minor}.{v.Build}";
         }
     }
 }
