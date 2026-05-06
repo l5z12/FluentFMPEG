@@ -11,7 +11,7 @@
   <Identity
     Name="LukeZhang.FluentFMPEG"
     Publisher="CN=92DF4ED1-5D11-4997-BDEA-7C52EAB09625"
-    Version="1.0.0.0" />
+    Version="1.1.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="6416b58d-4693-4a16-87df-8059f0eebba5" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

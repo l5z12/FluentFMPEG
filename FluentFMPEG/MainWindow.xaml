@@ -60,7 +60,6 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <StackPanel Grid.Row="0"
@@ -357,13 +356,6 @@
                         IsEnabled="False"
                         Click="OnConvertClick" />
             </StackPanel>
-
-            <InfoBar Grid.Row="8"
-                     x:Name="FfmpegBar"
-                     IsOpen="False"
-                     IsClosable="False"
-                     Severity="Informational"
-                     Title="Checking FFmpeg…" />
         </Grid>
     </Grid>
 </Window>
