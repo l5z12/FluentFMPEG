@@ -302,11 +302,12 @@
                              PlaceholderText="hh:mm:ss or seconds" />
 
                     <TextBlock Grid.Row="4" Grid.Column="0"
-                               Text="Extra args" VerticalAlignment="Center" />
-                    <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
-                             x:Name="ExtraArgsBox"
-                             FontFamily="Consolas"
-                             PlaceholderText="Additional ffmpeg flags, appended verbatim" />
+                               Text="Hardware" VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
+                              x:Name="HardwareEncoderCombo"
+                              HorizontalAlignment="Stretch"
+                              SelectedIndex="0"
+                              ToolTipService.ToolTip="Used for H.264 / H.265 video encoding. Other codecs always run on CPU." />
                 </Grid>
             </Expander>
 

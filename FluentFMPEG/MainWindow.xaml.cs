@@ -93,7 +93,22 @@ namespace FluentFMPEG
                 ? "Hardware encoders available: " + string.Join(", ", hwEncoders)
                 : "No hardware encoders found — using CPU only.");
 
+            PopulateHardwareCombo();
             RefreshConvertButton();
+        }
+
+        private void PopulateHardwareCombo()
+        {
+            HardwareEncoderCombo.Items.Clear();
+            HardwareEncoderCombo.Items.Add(new ComboBoxItem { Content = "Auto", Tag = "auto" });
+            if (OutputPresets.HasEncoder("h264_nvenc") || OutputPresets.HasEncoder("hevc_nvenc"))
+                HardwareEncoderCombo.Items.Add(new ComboBoxItem { Content = "NVIDIA (NVENC)", Tag = "nvenc" });
+            if (OutputPresets.HasEncoder("h264_amf") || OutputPresets.HasEncoder("hevc_amf"))
+                HardwareEncoderCombo.Items.Add(new ComboBoxItem { Content = "AMD (AMF)", Tag = "amf" });
+            if (OutputPresets.HasEncoder("h264_qsv") || OutputPresets.HasEncoder("hevc_qsv"))
+                HardwareEncoderCombo.Items.Add(new ComboBoxItem { Content = "Intel (QSV)", Tag = "qsv" });
+            HardwareEncoderCombo.Items.Add(new ComboBoxItem { Content = "CPU (software)", Tag = "cpu" });
+            HardwareEncoderCombo.SelectedIndex = 0;
         }
 
         // ---------- Mode / Quality / Inputs ----------
@@ -417,6 +432,11 @@ namespace FluentFMPEG
 
         private AdvancedSettings GetAdvancedSettings()
         {
+            string hwTag = "auto";
+            if (HardwareEncoderCombo.SelectedItem is ComboBoxItem hwItem
+                && hwItem.Tag is string ht)
+                hwTag = ht;
+
             return new AdvancedSettings
             {
                 Resolution = ReadEditableCombo(ResolutionCombo, "Keep"),
@@ -427,7 +447,7 @@ namespace FluentFMPEG
                 AudioBitrate = ReadEditableCombo(AudioBitrateCombo, "Use Quality setting"),
                 TrimStart = NullIfBlank(TrimStartBox.Text),
                 TrimEnd = NullIfBlank(TrimEndBox.Text),
-                ExtraArgs = NullIfBlank(ExtraArgsBox.Text),
+                HardwareEncoder = hwTag,
             };
         }
 
@@ -550,7 +570,8 @@ namespace FluentFMPEG
         public string? AudioBitrate { get; init; }   // e.g. "192k" or "192"
         public string? TrimStart { get; init; }      // hh:mm:ss or seconds
         public string? TrimEnd { get; init; }
-        public string? ExtraArgs { get; init; }
+        // "auto" / "nvenc" / "amf" / "qsv" / "cpu" — used by H264/HEVC presets.
+        public string? HardwareEncoder { get; init; }
 
         public string NormalizedAudioBitrate()
         {
@@ -605,129 +626,135 @@ namespace FluentFMPEG
             adv.NormalizedAudioBitrate() is { Length: > 0 } b && long.TryParse(
                 b.TrimEnd('k', 'K'), out var kbps) ? kbps * 1000L : preset;
 
-        private static bool HasEncoder(string name) =>
+        public static bool HasEncoder(string name) =>
             Sdcb.FFmpeg.Codecs.Codec.FindEncoderByName(name) != null;
 
-        // Auto-pick H.264 encoder. NVENC is preferred when available (NVIDIA GPU
-        // with working driver). Falls through AMF (AMD), QSV (Intel), libx264 (CPU).
-        // The encoder presence check (FindEncoderByName) only confirms it's compiled
-        // in; if the driver/GPU is missing, codec Open will fail at runtime — log
-        // shows which one was selected so failures are diagnosable.
-        private static VideoSpec H264VideoSpec(Quality q)
+        // Honors AdvancedSettings.HardwareEncoder ("nvenc"/"amf"/"qsv"/"cpu"/"auto").
+        // For "auto" or unrecognized: NVENC → AMF → QSV → libx264. Explicit
+        // selections fall back to CPU only if the requested vendor isn't compiled in.
+        private static VideoSpec H264VideoSpec(Quality q, AdvancedSettings adv)
         {
             int cq = Crf(28, 22, 18, q);
-            if (HasEncoder("h264_nvenc"))
+            string pref = adv.HardwareEncoder ?? "auto";
+
+            VideoSpec? Try(string vendor) => vendor switch
             {
-                return new VideoSpec
-                {
-                    EncoderName = "h264_nvenc",
-                    PreferredPixelFormat = AVPixelFormat.Yuv420p,
-                    PrivateOptions = new()
-                    {
-                        ["preset"] = "p4",
-                        ["tune"] = "hq",
-                        ["rc"] = "vbr",
-                        ["cq"] = cq.ToString(CultureInfo.InvariantCulture),
-                        ["b:v"] = "0",
-                    },
-                };
-            }
-            if (HasEncoder("h264_amf"))
-            {
-                return new VideoSpec
-                {
-                    EncoderName = "h264_amf",
-                    PreferredPixelFormat = AVPixelFormat.Nv12,
-                    PrivateOptions = new()
-                    {
-                        ["quality"] = "balanced",
-                        ["rc"] = "cqp",
-                        ["qp_i"] = cq.ToString(CultureInfo.InvariantCulture),
-                        ["qp_p"] = cq.ToString(CultureInfo.InvariantCulture),
-                    },
-                };
-            }
-            if (HasEncoder("h264_qsv"))
-            {
-                return new VideoSpec
-                {
-                    EncoderName = "h264_qsv",
-                    PreferredPixelFormat = AVPixelFormat.Nv12,
-                    PrivateOptions = new()
-                    {
-                        ["preset"] = "medium",
-                        ["global_quality"] = cq.ToString(CultureInfo.InvariantCulture),
-                    },
-                };
-            }
-            return new VideoSpec
-            {
-                EncoderName = "libx264",
-                PrivateOptions = new()
-                {
-                    ["preset"] = "medium",
-                    ["crf"] = cq.ToString(CultureInfo.InvariantCulture),
-                },
+                "nvenc" when HasEncoder("h264_nvenc") => NvencH264(cq),
+                "amf"   when HasEncoder("h264_amf")   => AmfH264(cq),
+                "qsv"   when HasEncoder("h264_qsv")   => QsvH264(cq),
+                "cpu"                                  => SoftwareH264(cq),
+                _ => null,
             };
+
+            if (pref != "auto") return Try(pref) ?? AutoH264(cq);
+            return AutoH264(cq);
         }
 
-        private static VideoSpec HevcVideoSpec(Quality q)
+        private static VideoSpec HevcVideoSpec(Quality q, AdvancedSettings adv)
         {
             int cq = Crf(30, 24, 20, q);
-            if (HasEncoder("hevc_nvenc"))
+            string pref = adv.HardwareEncoder ?? "auto";
+
+            VideoSpec? Try(string vendor) => vendor switch
             {
-                return new VideoSpec
-                {
-                    EncoderName = "hevc_nvenc",
-                    PreferredPixelFormat = AVPixelFormat.Yuv420p,
-                    PrivateOptions = new()
-                    {
-                        ["preset"] = "p4",
-                        ["tune"] = "hq",
-                        ["rc"] = "vbr",
-                        ["cq"] = cq.ToString(CultureInfo.InvariantCulture),
-                        ["b:v"] = "0",
-                    },
-                };
-            }
-            if (HasEncoder("hevc_amf"))
-            {
-                return new VideoSpec
-                {
-                    EncoderName = "hevc_amf",
-                    PreferredPixelFormat = AVPixelFormat.Nv12,
-                    PrivateOptions = new()
-                    {
-                        ["quality"] = "balanced",
-                        ["rc"] = "cqp",
-                        ["qp_i"] = cq.ToString(CultureInfo.InvariantCulture),
-                        ["qp_p"] = cq.ToString(CultureInfo.InvariantCulture),
-                    },
-                };
-            }
-            if (HasEncoder("hevc_qsv"))
-            {
-                return new VideoSpec
-                {
-                    EncoderName = "hevc_qsv",
-                    PreferredPixelFormat = AVPixelFormat.Nv12,
-                    PrivateOptions = new()
-                    {
-                        ["preset"] = "medium",
-                        ["global_quality"] = cq.ToString(CultureInfo.InvariantCulture),
-                    },
-                };
-            }
-            return new VideoSpec
-            {
-                EncoderName = "libx265",
-                PrivateOptions = new()
-                {
-                    ["preset"] = "medium",
-                    ["crf"] = cq.ToString(CultureInfo.InvariantCulture),
-                },
+                "nvenc" when HasEncoder("hevc_nvenc") => NvencHevc(cq),
+                "amf"   when HasEncoder("hevc_amf")   => AmfHevc(cq),
+                "qsv"   when HasEncoder("hevc_qsv")   => QsvHevc(cq),
+                "cpu"                                  => SoftwareHevc(cq),
+                _ => null,
             };
+
+            if (pref != "auto") return Try(pref) ?? AutoHevc(cq);
+            return AutoHevc(cq);
         }
+
+        private static VideoSpec AutoH264(int cq)
+        {
+            if (HasEncoder("h264_nvenc")) return NvencH264(cq);
+            if (HasEncoder("h264_amf"))   return AmfH264(cq);
+            if (HasEncoder("h264_qsv"))   return QsvH264(cq);
+            return SoftwareH264(cq);
+        }
+
+        private static VideoSpec AutoHevc(int cq)
+        {
+            if (HasEncoder("hevc_nvenc")) return NvencHevc(cq);
+            if (HasEncoder("hevc_amf"))   return AmfHevc(cq);
+            if (HasEncoder("hevc_qsv"))   return QsvHevc(cq);
+            return SoftwareHevc(cq);
+        }
+
+        private static VideoSpec NvencH264(int cq) => new()
+        {
+            EncoderName = "h264_nvenc",
+            PreferredPixelFormat = AVPixelFormat.Yuv420p,
+            PrivateOptions = new()
+            {
+                ["preset"] = "p4", ["tune"] = "hq", ["rc"] = "vbr",
+                ["cq"] = cq.ToString(CultureInfo.InvariantCulture), ["b:v"] = "0",
+            },
+        };
+
+        private static VideoSpec NvencHevc(int cq) => new()
+        {
+            EncoderName = "hevc_nvenc",
+            PreferredPixelFormat = AVPixelFormat.Yuv420p,
+            PrivateOptions = new()
+            {
+                ["preset"] = "p4", ["tune"] = "hq", ["rc"] = "vbr",
+                ["cq"] = cq.ToString(CultureInfo.InvariantCulture), ["b:v"] = "0",
+            },
+        };
+
+        private static VideoSpec AmfH264(int cq) => new()
+        {
+            EncoderName = "h264_amf",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new()
+            {
+                ["quality"] = "balanced", ["rc"] = "cqp",
+                ["qp_i"] = cq.ToString(CultureInfo.InvariantCulture),
+                ["qp_p"] = cq.ToString(CultureInfo.InvariantCulture),
+            },
+        };
+
+        private static VideoSpec AmfHevc(int cq) => new()
+        {
+            EncoderName = "hevc_amf",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new()
+            {
+                ["quality"] = "balanced", ["rc"] = "cqp",
+                ["qp_i"] = cq.ToString(CultureInfo.InvariantCulture),
+                ["qp_p"] = cq.ToString(CultureInfo.InvariantCulture),
+            },
+        };
+
+        private static VideoSpec QsvH264(int cq) => new()
+        {
+            EncoderName = "h264_qsv",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new() { ["preset"] = "medium", ["global_quality"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
+
+        private static VideoSpec QsvHevc(int cq) => new()
+        {
+            EncoderName = "hevc_qsv",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new() { ["preset"] = "medium", ["global_quality"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
+
+        private static VideoSpec SoftwareH264(int cq) => new()
+        {
+            EncoderName = "libx264",
+            PrivateOptions = new() { ["preset"] = "medium", ["crf"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
+
+        private static VideoSpec SoftwareHevc(int cq) => new()
+        {
+            EncoderName = "libx265",
+            PrivateOptions = new() { ["preset"] = "medium", ["crf"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
 
         public static readonly List<OutputPreset> All = new()
         {
@@ -740,7 +767,7 @@ namespace FluentFMPEG
                     MuxerFormat = "mp4",
                     Category = PresetCategory.Video,
                     VideoCopy = mode == Mode.Mix,
-                    Video = mode == Mode.Mix ? null : H264VideoSpec(q),
+                    Video = mode == Mode.Mix ? null : H264VideoSpec(q, adv),
                     Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
                     {
                         EncoderName = "aac",
@@ -758,7 +785,7 @@ namespace FluentFMPEG
                     MuxerFormat = "matroska",
                     Category = PresetCategory.Video,
                     VideoCopy = mode == Mode.Mix,
-                    Video = mode == Mode.Mix ? null : HevcVideoSpec(q),
+                    Video = mode == Mode.Mix ? null : HevcVideoSpec(q, adv),
                     Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
                     {
                         EncoderName = "aac",
