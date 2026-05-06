@@ -90,6 +90,15 @@ namespace FluentFMPEG
             inA.LoadStreamInfo();
 
             FormatContext? inB = null;
+            FormatContext? outFc = null;
+            IOContext? outIo = null;
+            CodecContext? videoDec = null;
+            CodecContext? videoEnc = null;
+            CodecContext? audioDec = null;
+            CodecContext? audioEnc = null;
+            VideoFilterContext? videoFilter = null;
+            AudioFilterContext? audioFilter = null;
+
             try
             {
                 if (secondaryInput != null)
@@ -124,12 +133,9 @@ namespace FluentFMPEG
                 double trimStart = ParseTime(adv.TrimStart);
                 double trimEnd = ParseTime(adv.TrimEnd);
 
-                using var outFc = FormatContext.AllocOutput(null, plan.MuxerFormat, outputPath);
+                outFc = FormatContext.AllocOutput(null, plan.MuxerFormat, outputPath);
                 bool muxerNeedsGlobalHeader = ((outFc.OutputFormat?.Flags ?? (AVFMT)0) & AVFMT.Globalheader) != 0;
 
-                CodecContext? videoDec = null;
-                CodecContext? videoEnc = null;
-                VideoFilterContext? videoFilter = null;
                 MediaStream? videoOutStream = null;
 
                 if (videoIn is { } vIn)
@@ -184,9 +190,6 @@ namespace FluentFMPEG
                     }
                 }
 
-                CodecContext? audioDec = null;
-                CodecContext? audioEnc = null;
-                AudioFilterContext? audioFilter = null;
                 MediaStream? audioOutStream = null;
 
                 if (audioIn is { } aIn && plan.Audio != null)
@@ -222,7 +225,8 @@ namespace FluentFMPEG
                     }
                 }
 
-                outFc.Pb = IOContext.OpenWrite(outputPath, null);
+                outIo = IOContext.OpenWrite(outputPath, null);
+                outFc.Pb = outIo;
                 outFc.WriteHeader(ToDict(plan.MuxerOptions));
                 log?.Invoke($"Muxer: {plan.MuxerFormat} → {Path.GetFileName(outputPath)}");
 
@@ -385,15 +389,10 @@ namespace FluentFMPEG
                 }
 
                 // Cancellation: skip the (potentially slow) drain + trailer entirely.
+                // The finally block below releases all native resources.
                 if (ct.IsCancellationRequested)
                 {
                     log?.Invoke("[cancel] Aborted before drain.");
-                    videoFilter?.FilterGraph.Free();
-                    audioFilter?.FilterGraph.Free();
-                    videoEnc?.Free();
-                    audioEnc?.Free();
-                    videoDec?.Free();
-                    audioDec?.Free();
                     return CanceledExitCode;
                 }
 
@@ -433,13 +432,6 @@ namespace FluentFMPEG
 
                 outFc.WriteTrailer();
 
-                videoFilter?.FilterGraph.Free();
-                audioFilter?.FilterGraph.Free();
-                videoEnc?.Free();
-                audioEnc?.Free();
-                videoDec?.Free();
-                audioDec?.Free();
-
                 double totalElapsed = (Environment.TickCount64 - startTick) / 1000.0;
                 log?.Invoke($"Wrote {packetsRead} input packets, {videoFramesEncoded} video frames, {audioSamplesEncoded} audio samples in {totalElapsed:0.0}s");
                 progress?.Report(new EngineProgress(100));
@@ -447,7 +439,24 @@ namespace FluentFMPEG
             }
             finally
             {
-                inB?.Dispose();
+                // Free encoders/filters first (they reference codec params), then
+                // close the output IO so the file handle is released back to the OS,
+                // and finally dispose the format context. Any of these can be null
+                // if we failed early in setup — null-conditional handles that.
+                try { videoFilter?.FilterGraph.Free(); } catch { }
+                try { audioFilter?.FilterGraph.Free(); } catch { }
+                try { videoEnc?.Free(); } catch { }
+                try { audioEnc?.Free(); } catch { }
+                try { videoDec?.Free(); } catch { }
+                try { audioDec?.Free(); } catch { }
+
+                // The output file handle lives in IOContext, separate from
+                // FormatContext — closing it explicitly is what lets other programs
+                // open/modify the file once we're done.
+                if (outFc != null) outFc.Pb = null;
+                try { outIo?.Close(); } catch { }
+                try { outFc?.Dispose(); } catch { }
+                try { inB?.Dispose(); } catch { }
             }
         }
 
