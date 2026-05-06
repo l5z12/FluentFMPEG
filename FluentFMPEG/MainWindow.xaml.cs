@@ -756,6 +756,76 @@ namespace FluentFMPEG
             PrivateOptions = new() { ["preset"] = "medium", ["crf"] = cq.ToString(CultureInfo.InvariantCulture) },
         };
 
+        // AV1 has a wider quality range than H.264/HEVC (0–63 in libsvtav1).
+        private static VideoSpec Av1VideoSpec(Quality q, AdvancedSettings adv)
+        {
+            int cq = Crf(40, 32, 24, q);
+            string pref = adv.HardwareEncoder ?? "auto";
+
+            VideoSpec? Try(string vendor) => vendor switch
+            {
+                "nvenc" when HasEncoder("av1_nvenc") => NvencAv1(cq),
+                "amf"   when HasEncoder("av1_amf")   => AmfAv1(cq),
+                "qsv"   when HasEncoder("av1_qsv")   => QsvAv1(cq),
+                "cpu"                                 => SoftwareAv1(cq),
+                _ => null,
+            };
+
+            if (pref != "auto") return Try(pref) ?? AutoAv1(cq);
+            return AutoAv1(cq);
+        }
+
+        private static VideoSpec AutoAv1(int cq)
+        {
+            if (HasEncoder("av1_nvenc")) return NvencAv1(cq);
+            if (HasEncoder("av1_amf"))   return AmfAv1(cq);
+            if (HasEncoder("av1_qsv"))   return QsvAv1(cq);
+            return SoftwareAv1(cq);
+        }
+
+        private static VideoSpec NvencAv1(int cq) => new()
+        {
+            EncoderName = "av1_nvenc",
+            PreferredPixelFormat = AVPixelFormat.Yuv420p,
+            PrivateOptions = new()
+            {
+                ["preset"] = "p4", ["tune"] = "hq", ["rc"] = "vbr",
+                ["cq"] = cq.ToString(CultureInfo.InvariantCulture), ["b:v"] = "0",
+            },
+        };
+
+        private static VideoSpec AmfAv1(int cq) => new()
+        {
+            EncoderName = "av1_amf",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new()
+            {
+                ["quality"] = "balanced", ["rc"] = "cqp",
+                ["qp_i"] = cq.ToString(CultureInfo.InvariantCulture),
+                ["qp_p"] = cq.ToString(CultureInfo.InvariantCulture),
+            },
+        };
+
+        private static VideoSpec QsvAv1(int cq) => new()
+        {
+            EncoderName = "av1_qsv",
+            PreferredPixelFormat = AVPixelFormat.Nv12,
+            PrivateOptions = new() { ["preset"] = "medium", ["global_quality"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
+
+        private static VideoSpec SoftwareAv1(int cq) => new()
+        {
+            EncoderName = "libsvtav1",
+            PreferredPixelFormat = AVPixelFormat.Yuv420p,
+            // SVT-AV1 preset 0–13 (lower = slower/better). 8 is a reasonable default.
+            PrivateOptions = new() { ["preset"] = "8", ["crf"] = cq.ToString(CultureInfo.InvariantCulture) },
+        };
+
+        // FOURCC builder: "hvc1" → 0x31637668. Used to flip HEVC-in-MP4's CodecTag
+        // from the default `hev1` to `hvc1` for Apple compatibility.
+        private static uint Fourcc(string s) =>
+            (uint)(s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24));
+
         public static readonly List<OutputPreset> All = new()
         {
             new()
@@ -827,6 +897,101 @@ namespace FluentFMPEG
             },
             new()
             {
+                Label = "MP4 (H.265 + AAC)", Extension = "mp4", Category = PresetCategory.Video,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "mp4",
+                    Category = PresetCategory.Video,
+                    VideoCopy = mode == Mode.Mix,
+                    Video = mode == Mode.Mix ? null : HevcVideoSpec(q, adv) with { CodecTag = Fourcc("hvc1") },
+                    Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
+                    {
+                        EncoderName = "aac",
+                        Bitrate = ResolveAudioBitrate(adv, Br(128, 192, 256, q)),
+                    },
+                    MuxerOptions = new() { ["movflags"] = "+faststart" },
+                },
+            },
+            new()
+            {
+                Label = "MP4 (AV1 + AAC)", Extension = "mp4", Category = PresetCategory.Video,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "mp4",
+                    Category = PresetCategory.Video,
+                    VideoCopy = mode == Mode.Mix,
+                    Video = mode == Mode.Mix ? null : Av1VideoSpec(q, adv),
+                    Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
+                    {
+                        EncoderName = "aac",
+                        Bitrate = ResolveAudioBitrate(adv, Br(128, 192, 256, q)),
+                    },
+                    MuxerOptions = new() { ["movflags"] = "+faststart" },
+                },
+            },
+            new()
+            {
+                Label = "WebM (AV1 + Opus)", Extension = "webm", Category = PresetCategory.Video,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "webm",
+                    Category = PresetCategory.Video,
+                    VideoCopy = mode == Mode.Mix,
+                    Video = mode == Mode.Mix ? null : Av1VideoSpec(q, adv),
+                    Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
+                    {
+                        EncoderName = "libopus",
+                        Bitrate = ResolveAudioBitrate(adv, Br(96, 128, 192, q)),
+                    },
+                },
+            },
+            new()
+            {
+                Label = "MOV (H.264 + AAC)", Extension = "mov", Category = PresetCategory.Video,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "mov",
+                    Category = PresetCategory.Video,
+                    VideoCopy = mode == Mode.Mix,
+                    Video = mode == Mode.Mix ? null : H264VideoSpec(q, adv),
+                    Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
+                    {
+                        EncoderName = "aac",
+                        Bitrate = ResolveAudioBitrate(adv, Br(128, 192, 256, q)),
+                    },
+                    MuxerOptions = new() { ["movflags"] = "+faststart" },
+                },
+            },
+            new()
+            {
+                Label = "MOV (ProRes HQ)", Extension = "mov", Category = PresetCategory.Video,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "mov",
+                    Category = PresetCategory.Video,
+                    VideoCopy = mode == Mode.Mix,
+                    Video = mode == Mode.Mix ? null : new VideoSpec
+                    {
+                        EncoderName = "prores_ks",
+                        // ProRes profile: 0=Proxy 1=LT 2=Std 3=HQ 4=4444 5=4444XQ.
+                        // Quality slider maps to LT / HQ / 4444; HQ uses yuv422p10le,
+                        // 4444 needs yuva444p10le for full alpha.
+                        PreferredPixelFormat = q == Quality.High ? AVPixelFormat.Yuva444p10le : AVPixelFormat.Yuv422p10le,
+                        Profile = q switch { Quality.Low => 1, Quality.High => 4, _ => 3 },
+                    },
+                    Audio = mode == Mode.ExtractVideo ? null : new AudioSpec
+                    {
+                        EncoderName = "pcm_s16le",   // ProRes intermediates pair with PCM, not AAC.
+                    },
+                },
+            },
+            new()
+            {
                 Label = "Animated GIF", Extension = "gif", Category = PresetCategory.Video,
                 PlanBuilder = (mode, q, adv) => new OutputPlan
                 {
@@ -885,6 +1050,17 @@ namespace FluentFMPEG
                         EncoderName = "libopus",
                         Bitrate = ResolveAudioBitrate(adv, Br(96, 128, 192, q)),
                     },
+                },
+            },
+            new()
+            {
+                Label = "ALAC (Apple lossless)", Extension = "m4a", Category = PresetCategory.Audio,
+                PlanBuilder = (mode, q, adv) => new OutputPlan
+                {
+                    Mode = mode,
+                    MuxerFormat = "ipod",
+                    Category = PresetCategory.Audio,
+                    Audio = new AudioSpec { EncoderName = "alac" },
                 },
             },
             new()

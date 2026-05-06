@@ -36,6 +36,11 @@ namespace FluentFMPEG
         public long Bitrate { get; init; }
         public int? GlobalQuality { get; init; }
         public AVPixelFormat? PreferredPixelFormat { get; init; }
+        // Optional FOURCC override (e.g., "hvc1" for HEVC-in-MP4 Apple compat).
+        public uint? CodecTag { get; init; }
+        // Optional integer profile for the encoder (set via AVCodecContext.profile,
+        // e.g., ProRes profile 3 = HQ).
+        public int? Profile { get; init; }
     }
 
     internal sealed record AudioSpec
@@ -162,6 +167,8 @@ namespace FluentFMPEG
                             videoEnc.Flags |= AV_CODEC_FLAG.Qscale;
                             videoEnc.GlobalQuality = gq * ffmpeg.FF_QP2LAMBDA;
                         }
+                        if (plan.Video.Profile is { } profile)
+                            videoEnc.Profile = profile;
                         if (muxerNeedsGlobalHeader)
                             videoEnc.Flags |= AV_CODEC_FLAG.GlobalHeader;
 
@@ -171,6 +178,8 @@ namespace FluentFMPEG
                         var vOut = outFc.NewStream(encoder);
                         vOut.TimeBase = videoEnc.TimeBase;
                         vOut.Codecpar!.CopyFrom(videoEnc);
+                        if (plan.Video.CodecTag is { } tag)
+                            vOut.Codecpar.CodecTag = tag;
                         videoOutStream = vOut;
                     }
                 }
