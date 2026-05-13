@@ -430,6 +430,40 @@ namespace FluentFMPEG
             await dialog.ShowAsync();
         }
 
+        private async void OnSettingsClick(object sender, RoutedEventArgs e)
+        {
+            var dialog = new SettingsDialog { XamlRoot = Content.XamlRoot };
+            dialog.ResetRequested += (_, _) => ResetAll();
+            await dialog.ShowAsync();
+        }
+
+        private async void ResetAll()
+        {
+            _cts?.Cancel();
+
+            // Legacy v1.0.0.0 downloaded ffmpeg.exe/ffprobe.exe here. Bundled
+            // builds never touch it, but it can linger on upgraded installs.
+            try
+            {
+                var legacyDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "FluentFMPEG");
+                if (Directory.Exists(legacyDir))
+                    Directory.Delete(legacyDir, recursive: true);
+            }
+            catch { }
+
+            // Clears LocalFolder, LocalCacheFolder, Roaming*, Temporary*, and
+            // both settings containers in one shot.
+            try
+            {
+                await Windows.Storage.ApplicationData.Current.ClearAsync();
+            }
+            catch { }
+
+            Microsoft.Windows.AppLifecycle.AppInstance.Restart("");
+        }
+
         private AdvancedSettings GetAdvancedSettings()
         {
             string hwTag = "auto";
